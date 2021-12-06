@@ -201,7 +201,7 @@ let Chaincode = class {
     // args is passed as a JSON string
     let json = JSON.parse(args);
     let key = 'issuer' + json['donorUserName'];
-    json['docType'] = 'donor';
+    json['docType'] = 'travelers';
 
     console.log('##### createDonor payload: ' + JSON.stringify(json));
 
