@@ -1,19 +1,3 @@
-/*
-# Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
-# 
-# Licensed under the Apache License, Version 2.0 (the "License").
-# You may not use this file except in compliance with the License.
-# A copy of the License is located at
-# 
-#     http://www.apache.org/licenses/LICENSE-2.0
-# 
-# or in the "license" file accompanying this file. This file is distributed 
-# on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either 
-# express or implied. See the License for the specific language governing 
-# permissions and limitations under the License.
-#
-*/
-
 'use strict';
 const shim = require('fabric-shim');
 const util = require('util');
@@ -132,264 +116,6 @@ async function queryByString(stub, queryString) {
   }
 }
 
-/**
- * Record spend made by an NGO
- * 
- * This functions allocates the spend amongst the donors, so each donor can see how their 
- * donations are spent. The logic works as follows:
- * 
- *    - Get the donations made to this NGO
- *    - Get the spend per donation, to calculate how much of the donation amount is still available for spending
- *    - Calculate the total amount spent by this NGO
- *    - If there are sufficient donations available, create a SPEND record
- *    - Allocate the spend between all the donations and create SPENDALLOCATION records
- * 
- * @param {*} spend - the spend amount to be recorded. This will be JSON, as follows:
- * {
- *   "docType": "spend",
- *   "spendId": "1234",
- *   "spendAmount": 100,
- *   "spendDate": "2018-09-20T12:41:59.582Z",
- *   "spendDescription": "Delias Dainty Delights",
- *   "ngoRegistrationNumber": "1234"
- * }
- */
-async function allocateSpend(stub, spend) {
-  console.log('============= START : allocateSpend ===========');
-  console.log('##### allocateSpend - Spend received: ' + JSON.stringify(spend));
-
-  // validate we have a valid SPEND object and a valid amount
-  if (!(spend && spend['spendAmount'] && typeof spend['spendAmount'] === 'number' && isFinite(spend['spendAmount']))) {
-    throw new Error('##### allocateSpend - Spend Amount is not a valid number: ' + spend['spendAmount']);   
-  }
-  // validate we have a valid SPEND object and a valid SPEND ID
-  if (!(spend && spend['spendId'])) {
-    throw new Error('##### allocateSpend - Spend Id is required but does not exist in the spend message');   
-  }
-
-  // validate that we have a valid NGO
-  let ngo = spend['ngoRegistrationNumber'];
-  let ngoKey = 'ngo' + ngo;
-  let ngoQuery = await queryByKey(stub, ngoKey);
-  if (!ngoQuery.toString()) {
-    throw new Error('##### allocateSpend - Cannot create spend allocation record as the NGO does not exist: ' + json['ngoRegistrationNumber']);
-  }
-
-  // first, get the total amount of donations donated to this NGO
-  let totalDonations = 0;
-  const donationMap = new Map();
-  let queryString = '{"selector": {"docType": "donation", "ngoRegistrationNumber": "' + ngo + '"}}';
-  let donationsForNGO = await queryByString(stub, queryString);
-  console.log('##### allocateSpend - allocateSpend - getDonationsForNGO: ' + donationsForNGO);
-  donationsForNGO = JSON.parse(donationsForNGO.toString());
-  console.log('##### allocateSpend - getDonationsForNGO as JSON: ' + donationsForNGO);
-
-  // store all donations for the NGO in a map. Each entry in the map will look as follows:
-  //
-  // {"Key":"donation2211","Record":{"docType":"donation","donationAmount":100,"donationDate":"2018-09-20T12:41:59.582Z","donationId":"2211","donorUserName":"edge","ngoRegistrationNumber":"6322"}}
-  for (let n = 0; n < donationsForNGO.length; n++) {
-    let donation = donationsForNGO[n];
-    console.log('##### allocateSpend - getDonationsForNGO Donation: ' + JSON.stringify(donation));
-    totalDonations += donation['Record']['donationAmount'];
-    // store the donations made
-    donationMap.set(donation['Record']['donationId'], donation);
-    console.log('##### allocateSpend - donationMap - adding new donation entry for donor: ' + donation['Record']['donationId'] + ', values: ' + JSON.stringify(donation));
-  }
-  console.log('##### allocateSpend - Total donations for this ngo are: ' + totalDonations);
-  for (let donation of donationMap) {
-    console.log('##### allocateSpend - Total donation for this donation ID: ' + donation[0] + ', amount: ' + donation[1]['Record']['donationAmount'] + ', entry: ' + JSON.stringify(donation[1]));
-  }
-
-  // next, get the spend by Donation, i.e. the amount of each Donation that has already been spent
-  let totalSpend = 0;
-  const donationSpendMap = new Map();
-  queryString = '{"selector": {"docType": "spendAllocation", "ngoRegistrationNumber": "' + ngo + '"}}';
-  let spendAllocations = await queryByString(stub, queryString);
-  spendAllocations = JSON.parse(spendAllocations.toString());
-  for (let n = 0; n < spendAllocations.length; n++) {
-    let spendAllocation = spendAllocations[n]['Record'];
-    totalSpend += spendAllocation['spendAllocationAmount'];
-    // store the spend made per Donation
-    if (donationSpendMap.has(spendAllocation['donationId'])) {
-      let spendAmt = donationSpendMap.get(spendAllocation['donationId']);
-      spendAmt += spendAllocation['spendAllocationAmount'];
-      donationSpendMap.set(spendAllocation['donationId'], spendAmt);
-      console.log('##### allocateSpend - donationSpendMap - updating donation entry for donation ID: ' + spendAllocation['donationId'] + ' amount: ' + spendAllocation['spendAllocationAmount'] + ' total amt: ' + spendAmt);
-    }
-    else {
-      donationSpendMap.set(spendAllocation['donationId'], spendAllocation['spendAllocationAmount']);
-      console.log('##### allocateSpend - donationSpendMap - adding new donation entry for donation ID: ' + spendAllocation['donationId'] + ' amount: ' + spendAllocation['spendAllocationAmount']);
-    }
-  }
-  console.log('##### allocateSpend - Total spend for this ngo is: ' + totalSpend);
-  for (let donation of donationSpendMap) {
-    console.log('##### allocateSpend - Total spend against this donation ID: ' + donation[0] + ', spend amount: ' + donation[1] + ', entry: ' + donation);  
-    if (donationMap.has(donation[0])) {
-      console.log('##### allocateSpend - The matching donation for this donation ID: ' + donation[0] + ', donation amount: ' + donationMap.get(donation[0]));  
-    }
-    else {
-      console.log('##### allocateSpend - ERROR - cannot find the matching donation for this spend record for donation ID: ' + donation[0]);  
-    }
-  }
-
-  // at this point we have the total amount of donations made by donors to each NGO. We also have the total spend
-  // spent by an NGO with a breakdown per donation. 
-
-  // confirm whether the NGO has sufficient available funds to cover the new spend
-  let totalAvailable = totalDonations - totalSpend;
-  if (spend['spendAmount'] > totalAvailable) {
-    // Execution stops at this point; the transaction fails and rolls back.
-    // Any updates made by the transaction processor function are discarded.
-    // Transaction processor functions are atomic; all changes are committed,
-    // or no changes are committed.
-    console.log('##### allocateSpend - NGO ' + ngo + ' does not have sufficient funds available to cover this spend. Spend amount is: ' + spend['spendAmount'] + '. Available funds are currently: ' + totalAvailable + '. Total donations are: ' + totalDonations + ', total spend is: ' + totalSpend);
-    throw new Error('NGO ' + ngo + ' does not have sufficient funds available to cover this spend. Spend amount is: ' + spend['spendAmount'] + '. Available funds are currently: ' + totalAvailable);
-  }
-
-  // since the NGO has sufficient funds available, add the new spend record
-  spend['docType'] = 'spend';
-  let key = 'spend' + spend['spendId'];
-  console.log('##### allocateSpend - Adding the spend record to NGOSpend. Spend record is: ' + JSON.stringify(spend) + ' key is: ' + key);
-  await stub.putState(key, Buffer.from(JSON.stringify(spend)));
-
-  // allocate the spend as equally as possible to all the donations
-  console.log('##### allocateSpend - Allocating the spend amount amongst the donations from donors who donated funds to this NGO');
-  let spendAmount = spend.spendAmount;
-  let numberOfDonations = 0;
-  let spendAmountForDonor = 0;
-  let recordCounter = 0;
-
-  while (true) {
-    // spendAmount will be reduced as the spend is allocated to NGOSpendDonationAllocation records. 
-    // Once it reaches 0 we stop allocating. This caters for cases where the full allocation cannot
-    // be allocated to a donation record. In this case, only the remaining domation amount is allocated 
-    // (see variable amountAllocatedToDonation below).
-    // The remaining amount must be allocated to donation records with sufficient available funds.
-    if (spendAmount <= 0) {
-      break;
-    }
-    // calculate the number of donations still available, i.e. donations which still have funds available for spending. 
-    // as the spending reduces the donations there may be fewer and fewer donations available to split the spending between
-    // 
-    // all donations for the NGO are in donationMap. Each entry in the map will look as follows:
-    //
-    // {"Key":"donation2211","Record":{"docType":"donation","donationAmount":100,"donationDate":"2018-09-20T12:41:59.582Z","donationId":"2211","donorUserName":"edge","ngoRegistrationNumber":"6322"}}
-    numberOfDonations = 0;
-    for (let donation of donationMap) {
-      console.log('##### allocateSpend - Donation record, key is: ' +  donation[0] + ' value is: ' + JSON.stringify(donation[1]));
-      if (donationSpendMap.has(donation[0])) {
-        spendAmountForDonor = donationSpendMap.get(donation[0]);
-      }
-      else {
-        spendAmountForDonor = 0;
-      }
-      let availableAmountForDonor = donation[1]['Record']['donationAmount'] - spendAmountForDonor;
-      console.log('##### allocateSpend - Checking number of donations available for allocation. Donation ID: ' +  donation[0] + ' has spent: ' + spendAmountForDonor + ' and has the following amount available for spending: ' + availableAmountForDonor);
-      if (availableAmountForDonor > 0) {
-        numberOfDonations++;
-      }
-    }
-    //Validate that we have a valid spendAmount, numberOfDonations and spendAmountForDonor
-    //Invalid values could be caused by a bug in this function, or invalid values passed to this function
-    //that were not caught by the validation process earlier.
-    if (!(spendAmount && typeof spendAmount === 'number' && isFinite(spendAmount))) {
-      throw new Error('##### allocateSpend - spendAmount is not a valid number: ' + spendAmount);   
-    }
-    if (!(numberOfDonations && typeof numberOfDonations === 'number' && numberOfDonations > 0)) {
-      throw new Error('##### allocateSpend - numberOfDonations is not a valid number or is < 1: ' + numberOfDonations);   
-    }
-    //calculate how much spend to allocate to each donation
-    let spendPerDonation = spendAmount / numberOfDonations;
-    console.log('##### allocateSpend - Allocating the total spend amount of: ' + spendAmount + ', to ' + numberOfDonations + ' donations, resulting in ' + spendPerDonation + ' per donation');
-
-    if (!(spendPerDonation && typeof spendPerDonation === 'number' && isFinite(spendPerDonation))) {
-      throw new Error('##### allocateSpend - spendPerDonation is not a valid number: ' + spendPerDonation);   
-    }
-
-    // create the SPENDALLOCATION records. Each record looks as follows:
-    //
-    // {
-    //   "docType":"spendAllocation",
-    //   "spendAllocationId":"c5b39e938a29a80c225d10e8327caaf817f76aecd381c868263c4f59a45daf62-1",
-    //   "spendAllocationAmount":38.5,
-    //   "spendAllocationDate":"2018-09-20T12:41:59.582Z",
-    //   "spendAllocationDescription":"Peter Pipers Poulty Portions for Pets",
-    //   "donationId":"FFF6A68D-DB19-4CD3-97B0-01C1A793ED3B",
-    //   "ngoRegistrationNumber":"D0884B20-385D-489E-A9FD-2B6DBE5FEA43",
-    //   "spendId": "1234"
-    // }
-
-    for (let donation of donationMap) {
-      let donationId = donation[0];
-      let donationInfo = donation[1]['Record'];
-      //calculate how much of the donation's amount remains available for spending
-      let donationAmount = donationInfo['donationAmount'];
-      if (donationSpendMap.has(donationId)) {
-        spendAmountForDonor = donationSpendMap.get(donationId);
-      }
-      else {
-        spendAmountForDonor = 0;
-      }
-      let availableAmountForDonor = donationAmount - spendAmountForDonor;
-      //if the donation does not have sufficient funds to cover their allocation, then allocate
-      //all of the outstanding donation funds
-      let amountAllocatedToDonation = 0;
-      if (availableAmountForDonor >= spendPerDonation) {
-        amountAllocatedToDonation = spendPerDonation;
-        console.log('##### allocateSpend - donation ID ' + donationId + ' has sufficient funds to cover full allocation. Allocating: ' + amountAllocatedToDonation);
-      }
-      else if (availableAmountForDonor > 0) {
-        amountAllocatedToDonation = availableAmountForDonor;
-        // reduce the number of donations available since this donation record is fully allocated
-        numberOfDonations -= 1;
-        console.log('##### allocateSpend - donation ID ' + donationId + ' does not have sufficient funds to cover full allocation. Using all available funds: ' + amountAllocatedToDonation);
-      }
-      else {
-        // reduce the number of donations available since this donation record is fully allocated
-        numberOfDonations -= 1;
-        console.log('##### allocateSpend - donation ID ' + donationId + ' has no funds available at all. Available amount: ' + availableAmountForDonor + '. This donation ID will be ignored');
-        continue;
-      }
-      // add a new spendAllocation record containing the portion of a donation allocated to this spend
-      //
-      // spendAllocationId is (hopefully) using an ID created in a deterministic manner, meaning it should
-      // be identical on all endorsing peer nodes. If it isn't, the transaction validation process will fail
-      // when Fabric compares the write-sets for each transaction and discovers there is are different values.
-      let spendAllocationId = stub.getTxID() + '-' + recordCounter;
-      recordCounter++;
-      let key = 'spendAllocation' + spendAllocationId;
-      let spendAllocationRecord = {
-        docType: 'spendAllocation',
-        spendAllocationId: spendAllocationId,
-        spendAllocationAmount: amountAllocatedToDonation,
-        spendAllocationDate: spend['spendDate'],
-        spendAllocationDescription: spend['spendDescription'],
-        donationId: donationId,
-        ngoRegistrationNumber: ngo,
-        spendId: spend['spendId']
-      }; 
-
-      console.log('##### allocateSpend - creating spendAllocationRecord record: ' + JSON.stringify(spendAllocationRecord));
-      await stub.putState(key, Buffer.from(JSON.stringify(spendAllocationRecord)));
-
-      //reduce the total spend amount by the amount just spent in the NGOSpendDonationAllocation record
-      spendAmount -= amountAllocatedToDonation;
-
-      //update the spending map entry for this NGO. There may be no existing spend, in which case we'll create an entry in the map
-      if (donationSpendMap.has(donationId)) {
-        let spendAmt = donationSpendMap.get(donationId);
-        spendAmt += amountAllocatedToDonation;
-        donationSpendMap.set(donationId, spendAmt);
-        console.log('##### allocateSpend - donationSpendMap - updating spend entry for donation Id: ' + donationId + ' with spent amount allocated to donation: ' + amountAllocatedToDonation + ' - total amount of this donation now spent is: ' + spendAmt);
-      }
-      else {
-        donationSpendMap.set(donationId, amountAllocatedToDonation);
-        console.log('##### allocateSpend - donationSpendMap - adding new spend entry for donation ID: ' + donationId + ' with spent amount allocated to donation: ' + amountAllocatedToDonation);
-      }
-    }
-  }
-  console.log('============= END : allocateSpend ===========');
-}  
 
 /************************************************************************************************
  * 
@@ -405,7 +131,7 @@ let Chaincode = class {
    * @param {*} stub 
    */
   async Init(stub) {
-    console.log('=========== Init: Instantiated / Upgraded ngo chaincode ===========');
+    console.log('=========== Init: Instantiated / Upgraded vc chaincode ===========');
     return shim.success();
   }
 
@@ -453,23 +179,28 @@ let Chaincode = class {
    ************************************************************************************************/
 
    /**
-   * Creates a new donor
+   * Creates a new issue
    * 
    * @param {*} stub 
    * @param {*} args - JSON as follows:
    * {
-   *    "donorUserName":"edge",
-   *    "email":"edge@abc.com",
-   *    "registeredDate":"2018-10-22T11:52:20.182Z"
+   *    "firstName":"bhupat",
+   *    "lastName":"bheda",
+   *    "dob":"6/7/1990",
+   *    "mobileNumber":"+918866688569"
+   *    "emailAddress":"bhupat@webllisto.com"
+   *    "testName":"test"
+   *    "testResult":"true"
+   *    "testDateTime":"2018-10-22T11:52:20.182Z"
    * }
    */
-  async createDonor(stub, args) {
-    console.log('============= START : createDonor ===========');
-    console.log('##### createDonor arguments: ' + JSON.stringify(args));
+  async createIssuer(stub, args) {
+    console.log('============= START : create createIssuer ===========');
+    console.log('##### createIssuer arguments: ' + JSON.stringify(args));
 
     // args is passed as a JSON string
     let json = JSON.parse(args);
-    let key = 'donor' + json['donorUserName'];
+    let key = 'issuer' + json['donorUserName'];
     json['docType'] = 'donor';
 
     console.log('##### createDonor payload: ' + JSON.stringify(json));

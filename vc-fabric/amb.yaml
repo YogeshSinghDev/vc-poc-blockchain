@@ -59,7 +59,7 @@ Parameters:
     AllowedPattern: "^[0-9a-zA-Z]+$"
     ConstraintDescription: Network name must be alphanumeric and cannot contain spaces.
     Type: String
-    Default: vc-poc
+    Default: vcpoc
   NetworkDescription:
     Description: An optional description of your network.
     Type: String
