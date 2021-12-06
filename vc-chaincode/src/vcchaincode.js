@@ -115,27 +115,28 @@ let Chaincode = class {
     let json = JSON.parse(args);
     json['docType'] = 'travelers';
 
-    console.log('##### createDonor payload: ' + JSON.stringify(json));
+    console.log('##### createIssurer payload: ' + JSON.stringify(json));
 
     await stub.putState(key, Buffer.from(JSON.stringify(json)));
     await stub.putState('lastId',key);
-    console.log('============= END : createDonor ===========');
+    console.log('============= END : createIssurer ===========');
+    return key;
   }
 
   /**
-   * Retrieves a specfic donor
+   * Retrieves a specfic Issurer
    * 
    * @param {*} stub 
    * @param {*} key
    */
   async verify(stub, key) {
-    console.log('============= START : queryDonor ===========');
-    console.log('##### queryDonor arguments: ' + JSON.stringify(args));
+    console.log('============= START : queryIssurer ===========');
+    console.log('##### queryIssurer arguments: ' + JSON.stringify(args));
 
     // args is passed as a JSON string
     // let json = JSON.parse(args);
-    // let key = 'donor' + json['donorUserName'];
-    console.log('##### queryDonor key: ' + key);
+    // let key = 'Issurer' + json['IssurerUserName'];
+    console.log('##### queryIssurer key: ' + key);
 
     return queryByKey(stub, key);
   }
